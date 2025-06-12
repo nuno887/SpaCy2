@@ -1,22 +1,20 @@
+
+
 import os
 import spacy
 from spacy.pipeline import EntityRuler
 import json
 from spacy import displacy
 
-from people import extract_people_from_chunk
 
-
-# === CONFIG ===
-INPUT_DIR = "RAW_TXT"
-OUTPUT_DIR = "json_exports"
+# === Configuration ===
+input_directory = "RAW_TXT"
+output_directory = "temporary_DATA"
 
 # === Custom Entity Patterns ===
 PRIMARY_PATTERNS = [
     {"label": "SUM", "pattern": [{"TEXT": "Sumário"}, {"TEXT": ":", "OP": "!"}]},
     {"label": "SUM:", "pattern": [{"TEXT": "Sumário"}]},
-    # ⬇️  Replace the old DES block with this pattern
-    # --- replace the old “DES” block with this ---
     {
     "label": "DES",
     "pattern": [
@@ -81,9 +79,6 @@ PRIMARY_PATTERNS = [
 
         ]
     },
-
-
-
     {
         "label": "HEADER_DATE",
         "pattern": [
@@ -134,133 +129,151 @@ PRIMARY_PATTERNS = [
          {"IS_PUNCT": True, "OP": "*"},
         {"IS_UPPER": True, "OP": "+"},
     ]
-}
-
-
-
-,
-    
-
-]
-
-COMPOSED_PATTERNS = [
-    {
-    "label": "SEC_DES_SUM",
-    "pattern": [
-        {"IS_UPPER": True, "OP": "+"},
-        {"IS_SPACE": True, "OP": "*"},
-        {"IS_UPPER": True, "OP": "+"},
-        {"IS_SPACE": True, "OP": "*"},
-        {"LOWER": {"IN": ["despacho", "aviso"]}},
-        {"IS_SPACE": True, "OP": "*"},
-        {"TEXT": "n.º", "OP": "?"},
-        {"IS_SPACE": True, "OP": "*"},
-        {"LIKE_NUM": True},
-        {"IS_SPACE": True, "OP": "*"},
-        {"TEXT": "Sumário"},
-        {"TEXT": ":", "OP": "?"}
-    ]
 },
-
-
 ]
 
 
-# === Helper Functions ===
 
-
-
-def extract_text_between_labels(doc, start_label: str, end_label: str) -> str | None:
-    start, end = None, None
-    for ent in doc.ents:
-        if ent.label_ == start_label and start is None:
-            start = ent.end
-        elif ent.label_ == end_label and start is not None:
-            end = ent.start
-            break
-    return doc[start:end].text.strip() if start is not None and end is not None else None
-
-def group_by_despacho_with_metadata(extracted_doc) -> dict:
-    result = {}
-    current_secretaria = None
-
-    des_ents = [ent for ent in extracted_doc.ents if ent.label_ == "DES"]
-    secretaria_ents = [ent for ent in extracted_doc.ents if ent.label_ == "SECRETARIA"]
-    all_ents = sorted(secretaria_ents + des_ents, key=lambda x: x.start)
-
-    for i, ent in enumerate(all_ents):
-        if ent.label_ == "SECRETARIA":
-            current_secretaria = ent.text
-
-        elif ent.label_ == "DES" and current_secretaria:
-            start = ent.start
-            end = all_ents[i + 1].start if i + 1 < len(all_ents) else len(extracted_doc)
-            chunk = extracted_doc[start:end].text.replace(current_secretaria, "").strip()
-
-            metadata = {
-                "summary":      chunk,
-                "data":       "",
-                "autor":      extract_people_from_chunk(chunk.replace("\n"," ")),
-                "pessoas":    [],
-                "serie":      "",
-                "secretaria": current_secretaria,
-                "PDF":        filename,
-                "date":""
-            }
-
-            # ← only add the first one per title
-            key = ent.text.replace("\n", "")
-            if key not in result:
-                result[key] = [metadata]
-
-    return result
-
-
-
-
-def save_secretaria_dict_to_json(secretaria_dict, txt_filename, output_dir):
-    os.makedirs(output_dir, exist_ok=True)
-    json_filename = os.path.splitext(txt_filename)[0] + ".json"
-    json_path = os.path.join(output_dir, json_filename)
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(secretaria_dict, f, ensure_ascii=False, indent=2)
-    print(f"✅ JSON saved to: {json_path}")
 
 # === Setup NLP ===
 nlp = spacy.load("pt_core_news_lg")
 
-
-# Add composed/override patterns first
-ruler_composed = nlp.add_pipe("entity_ruler", name="ruler_composed", before="ner")
-ruler_composed.add_patterns(COMPOSED_PATTERNS)
-
 # Add general/primary patterns second
-ruler_primary = nlp.add_pipe("entity_ruler", name="ruler_primary", after="ruler_composed")
+ruler_primary = nlp.add_pipe("entity_ruler", name="ruler_primary")
 ruler_primary.add_patterns(PRIMARY_PATTERNS)
 
 
-# === Process All TXT Files ===
-for filename in os.listdir(INPUT_DIR):
-    if not filename.endswith(".txt"):
-        continue
-
-    filepath = os.path.join(INPUT_DIR, filename)
-    with open(filepath, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    doc = nlp(text)
-
-    if not any(ent.label_ in {"SUM", "TEXTO", "DES", "HEADER_DATE", "SECRETARIA", "SEC_DES_SUM"} for ent in doc.ents):
-        print(f"❌ No custom entities in: {filename}")
-        continue
-
-    extracted = extract_text_between_labels(doc, "SUM", "SEC_DES_SUM")
-    if not extracted:
-        print(f"⚠️ Could not extract between SUM and SEC_DES_SUM in: {filename}")
-        continue
-
-    extracted_doc = nlp(extracted)
-    secretaria_dict = group_by_despacho_with_metadata(extracted_doc)
 
 
-    save_secretaria_dict_to_json(secretaria_dict, filename, output_dir=OUTPUT_DIR)
+def truncate_after_ent(doc, label):
+    """
+    Truncate the text starting from the first token of the last entity with the given label.
+    The entity itself will also be removed.
+    """
+    ents = [ent for ent in doc.ents if ent.label_ == label]
+    if not ents:
+        return doc.text
+    last_ent = ents[-1]
+    return doc[:last_ent.start].text
+
+def remove_ent(doc, label):
+    """
+    Remove all entities with the given label from the document.
+    Returns the cleaned text with those entities removed.
+    """
+    spans_to_remove = [ent for ent in doc.ents if ent.label_ == label]
+
+    # Sort by start_char in reverse to avoid shifting offsets during deletion
+    spans_to_remove = sorted(spans_to_remove, key=lambda x: x.start_char, reverse=True)
+
+    text = doc.text
+    for span in spans_to_remove:
+        text = text[:span.start_char] + text[span.end_char:]
+
+    return text
+
+
+
+
+def truncate_before_second_des(doc, des_keys):
+    """
+    Find the first DES entity (ent.label_ == "DES" and ent.text in des_keys)
+    that appears twice, and return the substring of the original text
+    starting at that second occurrence. If no DES repeats, return the full text.
+    """
+    counts = {}
+    for ent in doc.ents:
+        if ent.label_ == "DES" and ent.text in des_keys:
+            counts[ent.text] = counts.get(ent.text, 0) + 1
+            if counts[ent.text] == 2:
+                # use start_char to slice the original text
+                return doc.text[ent.start_char:]
+    return doc.text
+
+from spacy.tokens import Span
+
+def add_json_key_entity(doc, key, label="JSON_KEY"):
+    """
+    If `key` appears in doc.text, create a Span for it and
+    append it to doc.ents under the given `label`.
+    """
+    if not key:
+        return doc
+    start_char = doc.text.find(key)
+    if start_char == -1:
+        return doc
+    end_char = start_char + len(key)
+    span = doc.char_span(start_char, end_char, label=label)
+    if span is not None:
+        doc.ents = list(doc.ents) + [span]
+    return doc
+
+
+
+def process_txt_and_truncate(input_dir: str,
+                             json_dir: str = "json_exports",
+                             output_dir: str = "temporary_DATA"):
+    """
+    For each .txt file in input_dir:
+      1. Load the corresponding .json from json_dir and get its first top-level key.
+      2. Read the .txt.
+      3. Count how many times that key appears.
+      4. If it appears at least twice, truncate the text before the second occurrence.
+      5. Write the (possibly truncated) text to output_dir under the same filename.
+      6. Print the filename, key, count, and whether truncation occurred.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    for filename in sorted(os.listdir(input_dir)):
+        if not filename.lower().endswith(".txt"):
+            continue
+
+        base = os.path.splitext(filename)[0]
+        json_path = os.path.join(json_dir, base + ".json")
+
+        # 1) Load first JSON key
+        try:
+            with open(json_path, "r", encoding="utf-8") as jf:
+                data = json.load(jf)
+            key = next(iter(data.keys()))
+        except (FileNotFoundError, StopIteration):
+            key = None
+
+        print(f"\n== {filename} ==")
+        if not key:
+            print("  (no JSON key found)")
+            continue
+        print(f"  JSON key: {key!r}")
+
+        # 2) Read text
+        txt_path = os.path.join(input_dir, filename)
+        with open(txt_path, "r", encoding="utf-8") as tf:
+            text = tf.read()
+
+        # 3) Count occurrences
+        count = text.count(key)
+        print(f"  Occurrences: {count}")
+
+        truncated = text
+        truncated_flag = False
+
+        # 4) Truncate before second occurrence if needed
+        if count >= 2:
+            first_pos = text.find(key)
+            second_pos = text.find(key, first_pos + len(key))
+            if second_pos != -1:
+                truncated = text[second_pos:]
+                truncated_flag = True
+
+        # 5) Write out
+        out_path = os.path.join(output_dir, filename)
+        with open(out_path, "w", encoding="utf-8") as out_f:
+            out_f.write(truncated)
+
+        # 6) Report
+        status = "truncated" if truncated_flag else "unchanged"
+        print(f"  Action: {status} (written to {out_path})")
+
+
+
+process_txt_and_truncate("RAW_TXT", json_dir="json_exports")

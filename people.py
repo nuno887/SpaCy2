@@ -13,7 +13,8 @@ UNWANTED_WORDS = [
     "sistemas", "informação", "tecnologias", "especialista", "recursos", "humanos",
     "apoio", "família", "idosa", "idoso", "assistente",
     "vogal", "conselho", "diretivo", "bilhete", "identidade", "inspetora", "tributária",
-    "tributário", "secundária", "bolseiro", "bolseira", "investigador", "investigadora"
+    "tributário", "secundária", "bolseiro", "bolseira", "investigador", "investigadora",
+    "contratação","gabinete", "pública", "anos"
 ]
 
 # Lista de títulos que podem anteceder nomes próprios
@@ -106,14 +107,25 @@ def extract_people_from_chunk(text: str) -> list[str]:
         
     return person_entities
 
-
 """
 text01 = "Despacho n.º 464/2025\nNomeia a licenciada em Direito, Anabela de Sousa Reis Varela, Técnica Superior do\nSistema Centralizado de Gestão de Recursos Humanos da Secretaria Regional de\nEducação, Ciência e Tecnologia, afeta à Direção Regional de Planeamento,\nRecursos e Infraestruturas, no cargo de Técnica Especialista do Gabinete do\nSecretário Regional da Economia."
 text02 = "Aviso n.º 139/2025\nAutoriza a renovação da comissão de serviço da Licenciada Ana Cristina Fernandes\nEscórcio, como Chefe de Divisão do Gabinete de Conferência e Conformidade,\ncargo de direção intermédia de 2.º grau, do Instituto de Administração da Saúde."
+
+text03 = "Autoriza a renovação da comissão de serviço no cargo de Direção Intermédia de 1.º Grau, ao Diretor de Serviços de Assuntos Jurídicos e Apoio Técnico, José António de Sousa e Freitas Câmara, Técnico Superior do mapa de pessoal da Direção Regional de Administração Escolar, com efeitos a partir 12 de agosto de 2025."
+
+
+text04 = "Nomeia o Doutor em Ciências Musicais, área de Musicologia Histórica, Paulo Alexandre Gonçalves da Silva Esteireiro, em regime de comissão de serviço, pelo período de três anos, no cargo de Presidente Conservatório - Escola Profissional das Artes da Madeira - Eng.º Luiz Peter Clode, cargo de direção superior de 1.º grau, com efeitos a 1 de junho de 2025."
+
 
 print("text01")
 print(extract_people_from_chunk(text01))
 print("text02")
 print(extract_people_from_chunk(text02))
+
+print("text03")
+print(extract_people_from_chunk(text03))
+
+print("text04")
+print(extract_people_from_chunk(text04))
 
 """
