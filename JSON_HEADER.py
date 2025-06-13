@@ -199,13 +199,12 @@ def group_by_despacho_with_metadata(extracted_doc) -> dict:
 
             metadata = {
                 "summary":      chunk,
-                "data":       "",
+                "date":       "",
                 "autor":      extract_people_from_chunk(chunk.replace("\n"," ")),
                 "pessoas":    [],
                 "serie":      "",
                 "secretaria": current_secretaria,
                 "PDF":        filename,
-                "date":""
             }
 
             # ← only add the first one per title

@@ -1,7 +1,8 @@
 import os
+import re
 import json
 from pathlib import Path
-import re
+from people import extract_people_from_chunk
 
 
 def list_json_keys(json_file: str) -> list:
@@ -37,7 +38,7 @@ def pair_json_and_txt(json_dir: str, txt_dir: str) -> dict:
         raise ValueError(f"TXT directory not found: {txt_dir}")
 
     json_files = {p.stem: p for p in json_path.glob('*.json')}
-    txt_files = {p.stem: p for p in txt_path.glob('*.txt')}
+    txt_files  = {p.stem: p for p in txt_path.glob('*.txt')}
     common = set(json_files) & set(txt_files)
     return {stem: (json_files[stem], txt_files[stem]) for stem in sorted(common)}
 
@@ -45,7 +46,7 @@ def pair_json_and_txt(json_dir: str, txt_dir: str) -> dict:
 def divide_txt_and_update_json(json_file: str, txt_file: str, root_output: str = 'DOC') -> None:
     """
     Splits the given .txt file into segments based on headers defined in the JSON metadata.
-    Also updates the JSON file by adding a 'path' entry to each metadata dict pointing to its segment file.
+    Updates the JSON file by adding 'path', 'pessoas', 'serie', and 'date' entries to each metadata dict.
 
     :param json_file: Path to the .json file containing header keys.
     :param txt_file:  Path to the .txt file to split.
@@ -58,7 +59,17 @@ def divide_txt_and_update_json(json_file: str, txt_file: str, root_output: str =
     if not txt_path.is_file():
         raise ValueError(f"TXT file not found: {txt_file}")
 
-    # Load JSON metadata and extract keys
+    # Derive 'serie' and 'date' using regex to extract YYYY-MM-DD
+    stem = txt_path.stem
+    m = re.search(r'^(.*?)-(\d{4}-\d{2}-\d{2})', stem)
+    if m:
+        serie_str = m.group(1)
+        date_str = m.group(2)
+    else:
+        serie_str = stem
+        date_str = ''
+
+    # Load JSON metadata
     try:
         data = json.loads(json_path.read_text(encoding='utf-8'))
     except Exception as e:
@@ -70,7 +81,7 @@ def divide_txt_and_update_json(json_file: str, txt_file: str, root_output: str =
         return
 
     content = txt_path.read_text(encoding='utf-8')
-    # Build regex to match any key
+    # Match any header key at start of line
     escaped = [re.escape(k) for k in keys]
     pattern = re.compile(r'(?m)^(' + '|'.join(escaped) + r')')
     matches = list(pattern.finditer(content))
@@ -78,35 +89,42 @@ def divide_txt_and_update_json(json_file: str, txt_file: str, root_output: str =
         print(f"No headers found in {txt_path.name}")
         return
 
-    # Prepare output directories
+    # Prepare output directory structure
     root_dir = Path(root_output)
     root_dir.mkdir(exist_ok=True)
-    file_dir = root_dir / txt_path.stem
+    file_dir = root_dir / stem
     file_dir.mkdir(exist_ok=True)
 
     # Process each segment
     for idx, match in enumerate(matches):
         start = match.start()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
-        segment = content[start:end].strip()
-        if not segment:
+        segment_text = content[start:end].strip()
+        if not segment_text:
             continue
         header = match.group(1)
-        # Sanitize for filename
+        # Sanitize header for filename
         fname = re.sub(r'[\\/:*?"<>| ]', '_', header)
         segment_path = file_dir / f"{fname}.txt"
-        segment_path.write_text(segment, encoding='utf-8')
+        segment_path.write_text(segment_text, encoding='utf-8')
 
         # Update JSON entries for this header
         for entry in data.get(header, []):
             entry['path'] = str(segment_path)
-        print(f"Created segment '{segment_path.name}' and updated JSON for header '{header}'")
+            people = extract_people_from_chunk(segment_text)
+            entry['pessoas'] = people
+            entry['serie'] = serie_str
+            entry['date'] = date_str
+            print(f"Processed header '{header}': path, pessoas, serie='{serie_str}', date='{date_str}' updated")
 
     # Write back updated JSON
-    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-    print(f"Updated JSON file with paths: {json_file}")
+    try:
+        json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        print(f"Updated JSON file: {json_file}")
+    except Exception as e:
+        print(f"Error writing JSON {json_file}: {e}")
 
-# Example overall process:
+# Example usage:
 pairs = pair_json_and_txt('json_exports', 'temporary_DATA')
-for stem, (jpath, tpath) in pairs.items():
+for jpath, tpath in pairs.values():
     divide_txt_and_update_json(str(jpath), str(tpath))
