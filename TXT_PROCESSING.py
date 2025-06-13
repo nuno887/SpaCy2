@@ -5,12 +5,42 @@ import spacy
 from spacy.pipeline import EntityRuler
 import json
 from spacy import displacy
-
+from pathlib import Path
+import re
 
 # === Configuration ===
 input_directory = "RAW_TXT"
 output_directory = "temporary_DATA"
 
+
+# Define Portuguese month names for the date pattern
+a_months = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
+]
+MONTHS = r"|".join(a_months)
+
+# Regex to match the full header block (multiline):
+#   • number - letter + date + newline + Número <digits>
+#   • date + letter - number + newline + Número <digits>
+#   • number + date + newline + Número <digits>
+#   • date + number + newline + Número <digits>
+HEADER_BLOCK_PATTERN = re.compile(
+    rf'''(?mx)                           # multiline, verbose
+    (                                   # capture group for full block
+      (?:                               # non-capturing group for header formats
+        \d+\s*-\s*[A-Za-z]\s+\d+\s+de\s+(?:{MONTHS})\s+de\s+\d{{4}}      # number - letter + date
+        |                               # OR
+        \d+\s+de\s+(?:{MONTHS})\s+de\s+\d{{4}}\s+[A-Za-z]\s*-\s*\d+      # date + letter - number
+        |                               # OR
+        \d+\s+\d+\s+de\s+(?:{MONTHS})\s+de\s+\d{{4}}                       # number + date
+        |                               # OR
+        \d+\s+de\s+(?:{MONTHS})\s+de\s+\d{{4}}\s+\d+                       # date + number
+      )
+      \r?\n                            # newline
+      Número\s+\d+                    # 'Número ' + digits
+    )'''
+)
 # === Custom Entity Patterns ===
 PRIMARY_PATTERNS = [
     {"label": "SUM", "pattern": [{"TEXT": "Sumário"}, {"TEXT": ":", "OP": "!"}]},
@@ -35,90 +65,6 @@ PRIMARY_PATTERNS = [
         { "IS_PUNCT": True, "OP": "!" }
     ]
 },
-     {
-        "label": "HEADER_DATE_CORRESPONDENCIA",
-        "pattern": [
-            {"LIKE_NUM": True},
-            {"IS_PUNCT": True, "TEXT": "-"},
-            {"IS_ALPHA": True, "LENGTH": 1},
-            {"IS_SPACE": True, "OP": "?"},
-            {"LIKE_NUM": True},
-            {"LOWER": "de"},
-            {"LOWER": {"IN": [
-                "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-                "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
-            ]}},
-            {"LOWER": "de"},
-            {"LIKE_NUM": True},
-            {"TEXT": {"REGEX": "^[\\n\\r]+$"}, "OP": "*"},  # newline token(s)
-            {"LOWER": "número"},
-            {"LIKE_NUM": True},
-            {"TEXT": {"REGEX": "^[\\n\\r]+$"}, "OP": "*"},  # newline token(s)
-            {"TEXT": {"REGEX": "^CORRESPONDÊNCIA$"}}
-        ]
-    },
-    {
-        "label": "HEADER_DATE_CORRESPONDENCIA",
-        "pattern": [
-            {"LIKE_NUM": True},
-            {"LOWER": "de"},
-            {"LOWER": {"IN": [
-                "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-                "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
-            ]}},
-            {"LOWER": "de"},
-            {"LIKE_NUM": True},
-            {"IS_ALPHA": True, "LENGTH": 1},
-            {"IS_PUNCT": True, "TEXT": "-"},
-            {"LIKE_NUM": True},
-            {"TEXT": {"REGEX": "^[\\n\\r]+$"}, "OP": "*"},  # newline token(s)
-            {"LOWER": "número"},
-            {"LIKE_NUM": True},
-            {"TEXT": {"REGEX": "^[\\n\\r]+$"}, "OP": "*"},  # newline token(s)
-            {"TEXT": {"REGEX": "^CORRESPONDÊNCIA$"}}
-
-        ]
-    },
-    {
-        "label": "HEADER_DATE",
-        "pattern": [
-            {"LIKE_NUM": True},
-            {"IS_PUNCT": True, "TEXT": "-"},
-            {"IS_ALPHA": True, "LENGTH": 1},
-            {"IS_SPACE": True, "OP": "?"},
-            {"LIKE_NUM": True},
-            {"LOWER": "de"},
-            {"LOWER": {"IN": [
-                "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-                "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
-            ]}},
-            {"LOWER": "de"},
-            {"LIKE_NUM": True},
-            {"TEXT": {"REGEX": "^[\\n\\r]+$"}, "OP": "*"},  # newline token(s)
-            {"LOWER": "número"},
-            {"LIKE_NUM": True},
-        ]
-    },
-    {
-        "label": "HEADER_DATE",
-        "pattern": [
-            {"LIKE_NUM": True},
-            {"LOWER": "de"},
-            {"LOWER": {"IN": [
-                "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-                "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
-            ]}},
-            {"LOWER": "de"},
-            {"LIKE_NUM": True},
-            {"IS_ALPHA": True, "LENGTH": 1},
-            {"IS_PUNCT": True, "TEXT": "-"},
-            {"LIKE_NUM": True},
-            {"TEXT": {"REGEX": "^[\\n\\r]+$"}, "OP": "*"},  # newline token(s)
-            {"LOWER": "número"},
-            {"LIKE_NUM": True}
-
-        ]
-    },
    {
     "label": "SECRETARIA",
     "pattern": [
@@ -131,7 +77,6 @@ PRIMARY_PATTERNS = [
     ]
 },
 ]
-
 
 
 
@@ -276,4 +221,74 @@ def process_txt_and_truncate(input_dir: str,
 
 
 
+def parse_directory_and_print_header_blocks(directory_path: str, recurse: bool = False) -> None:
+    """
+    Parses .txt files in the given directory and prints each full header block, including:
+      • '4 - S 30 de maio de 2025\nNúmero 97'
+      • '30 de maio de 2025 S - 7\nNúmero 97'
+      • '8 26 de maio de 2025\nNúmero 94'
+      • '26 de maio de 2025 5\nNúmero 94'
+    """
+    pattern = "**/*.txt" if recurse else "*.txt"
+    for filepath in Path(directory_path).glob(pattern):
+        if not filepath.is_file():
+            continue
+        try:
+            text = filepath.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"Could not read {filepath.name}: {e}")
+            continue
+
+        blocks = HEADER_BLOCK_PATTERN.findall(text)
+
+        print(f"\nFile: {filepath.name}")
+        if blocks:
+            for block in blocks:
+                print(f"  → {block}")
+        else:
+            print("  (no header blocks found)")
+
+
+
+def remove_text_after_last_header_block(directory_path: str, recurse: bool = False) -> None:
+    """
+    For each .txt file in the directory, finds the last occurrence of the header block
+    (as defined by HEADER_BLOCK_PATTERN) and truncates the file content immediately
+    after that block, removing any text that follows.
+    """
+    pattern = "**/*.txt" if recurse else "*.txt"
+    for filepath in Path(directory_path).glob(pattern):
+        if not filepath.is_file():
+            continue
+        text = filepath.read_text(encoding="utf-8")
+        matches = list(HEADER_BLOCK_PATTERN.finditer(text))
+        if not matches:
+            continue  # no header block, leave file unchanged
+        last_match = matches[-1]
+        end_pos = last_match.end()
+        truncated = text[:end_pos]
+        # Overwrite file with truncated content
+        filepath.write_text(truncated, encoding="utf-8")
+        print(f"Truncated {filepath.name} after last header block.")
+
+def remove_all_header_blocks(directory_path: str, recurse: bool = False) -> None:
+    """
+    For each .txt file in the directory, removes all occurrences of the header block
+    (as defined by HEADER_BLOCK_PATTERN) from the file content.
+    """
+    pattern = "**/*.txt" if recurse else "*.txt"
+    for filepath in Path(directory_path).glob(pattern):
+        if not filepath.is_file():
+            continue
+        text = filepath.read_text(encoding="utf-8")
+        # Remove all header blocks
+        cleaned_text = HEADER_BLOCK_PATTERN.sub('', text)
+        # Overwrite file if changes were made
+        if cleaned_text != text:
+            filepath.write_text(cleaned_text, encoding="utf-8")
+            print(f"Removed all headers in {filepath.name}.")
+
 process_txt_and_truncate("RAW_TXT", json_dir="json_exports")
+parse_directory_and_print_header_blocks("./temporary_DATA", recurse=True)
+remove_text_after_last_header_block("./temporary_DATA", recurse=True)
+remove_all_header_blocks("./temporary_DATA", recurse=True)
