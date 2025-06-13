@@ -21,7 +21,7 @@ PRIMARY_PATTERNS = [
     "label": "DES",
     "pattern": [
         {   # header must start the sentence / line
-            "LOWER": {"IN": ["despacho", "aviso", "declaração", "edital", "deliberação"]}
+            "LOWER": {"IN": ["despacho", "aviso", "declaração", "edital", "deliberação", "contrato"]}
         },
         {   # optional words between the header and “n.º”
             "LOWER": {"IN": ["conjunto", "de", "da", "do",
@@ -127,7 +127,7 @@ PRIMARY_PATTERNS = [
    {
     "label": "SECRETARIA",
     "pattern": [
-        {"TEXT": {"IN": ["PRESIDÊNCIA", "SECRETARIA"]}},       # anchor on SECRETARIA
+        {"TEXT": {"IN": ["PRESIDÊNCIA", "SECRETARIA", "CÂMARA"]}},       # anchor on SECRETARIA
         {"IS_UPPER": True, "OP": "+"}, 
          {"IS_PUNCT": True, "OP": "*"},
         {"TEXT": "\n", "OP": "?"},
